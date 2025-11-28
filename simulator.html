@@ -1,1 +1,103 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Vehicle Simulator</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body{font-family:Arial;padding:18px;background:#f7f7fb}
+    input, button, select{padding:8px;margin:6px 0;width:100%}
+    .grid{display:grid;gap:8px;max-width:420px}
+  </style>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+</head>
+<body>
+  <h1>Vehicle Simulator</h1>
+  <div class="grid">
+    <label>Vehicle ID <input id="vid" value="vehicle1" /></label>
+    <label>Latitude <input id="lat" value="12.9716" /></label>
+    <label>Longitude <input id="lng" value="77.5946" /></label>
+    <label>Speed (km/h) <input id="speed" value="30" /></label>
+    <label>Interval (ms) <input id="interval" value="2000" /></label>
 
+    <button id="start">Start sending</button>
+    <button id="stop">Stop</button>
+    <button id="randomize">Random walk once</button>
+    <pre id="log" style="height:200px;overflow:auto;background:#fff;padding:8px;border:1px solid #ddd"></pre>
+  </div>
+
+  <script>
+    // Your firebase config - same as index.html
+    const firebaseConfig = {
+      apiKey: "YOUR_API_KEY",
+      authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+      databaseURL: "https://YOUR_PROJECT_ID-default-rtdb.firebaseio.com",
+      projectId: "YOUR_PROJECT_ID",
+      storageBucket: "YOUR_PROJECT_ID.appspot.com",
+      messagingSenderId: "SENDER_ID",
+      appId: "APP_ID"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    const vidEl = document.getElementById('vid');
+    const latEl = document.getElementById('lat');
+    const lngEl = document.getElementById('lng');
+    const speedEl = document.getElementById('speed');
+    const logEl = document.getElementById('log');
+    const intervalEl = document.getElementById('interval');
+
+    let timer = null;
+
+    function sendOnce() {
+      const vid = vidEl.value.trim();
+      const lat = parseFloat(latEl.value);
+      const lng = parseFloat(lngEl.value);
+      const speed = parseFloat(speedEl.value) || 0;
+      const timestamp = Date.now();
+      const payload = { lat, lng, speed, timestamp };
+      db.ref('vehicles/' + vid).set(payload)
+        .then(() => {
+          log(`Sent: ${JSON.stringify(payload)}`);
+        })
+        .catch(err => {
+          log('Error: ' + err);
+        });
+    }
+
+    function log(msg) {
+      logEl.textContent = new Date().toLocaleTimeString() + " — " + msg + "\n" + logEl.textContent;
+    }
+
+    document.getElementById('start').addEventListener('click', () => {
+      if (timer) return;
+      sendOnce();
+      timer = setInterval(() => {
+        // random walk
+        const lat = parseFloat(latEl.value);
+        const lng = parseFloat(lngEl.value);
+        const deltaLat = (Math.random() - 0.5) * 0.0015;
+        const deltaLng = (Math.random() - 0.5) * 0.0015;
+        latEl.value = (lat + deltaLat).toFixed(6);
+        lngEl.value = (lng + deltaLng).toFixed(6);
+        sendOnce();
+      }, Math.max(500, parseInt(intervalEl.value) || 2000));
+    });
+
+    document.getElementById('stop').addEventListener('click', () => {
+      if (timer) { clearInterval(timer); timer = null; log('Stopped'); }
+    });
+
+    document.getElementById('randomize').addEventListener('click', () => {
+      const lat = parseFloat(latEl.value);
+      const lng = parseFloat(lngEl.value);
+      const deltaLat = (Math.random() - 0.5) * 0.005;
+      const deltaLng = (Math.random() - 0.5) * 0.005;
+      latEl.value = (lat + deltaLat).toFixed(6);
+      lngEl.value = (lng + deltaLng).toFixed(6);
+      sendOnce();
+    });
+  </script>
+</body>
+  </html>
