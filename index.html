@@ -1,1 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Vehicle Tracker</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-sA+4k6bJQ+ksj2Q0Z9y0m0f7s8wq8h3b0zjvP6tft8M=" crossorigin=""/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-o9N1j8g4kGk6W2f9k7Y+g0JkV6X4YrQj0g+z6S/7p8k=" crossorigin=""></script>
 
+  <!-- Firebase App (the core SDK) -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+</head>
+<body>
+  <header>
+    <h1>Vehicle Tracking Web App</h1>
+    <div id="status">Connecting...</div>
+  </header>
+
+  <main>
+    <div id="map"></div>
+    <aside id="info">
+      <h2>Vehicle Info</h2>
+      <div id="vehicle-list"></div>
+      <div id="last-update">Last update: —</div>
+      <button id="fit">Fit all vehicles</button>
+      <button id="clear-paths">Clear paths</button>
+      <p class="note">Use the simulator (simulator.html) to push sample GPS coordinates to Firebase.</p>
+    </aside>
+  </main>
+
+  <script>
+    // =======================
+    // CONFIGURE FIREBASE HERE
+    // =======================
+    // Replace these with your Firebase project's config values.
+    const firebaseConfig = {
+      apiKey: "YOUR_API_KEY",
+      authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+      databaseURL: "https://YOUR_PROJECT_ID-default-rtdb.firebaseio.com",
+      projectId: "YOUR_PROJECT_ID",
+      storageBucket: "YOUR_PROJECT_ID.appspot.com",
+      messagingSenderId: "SENDER_ID",
+      appId: "APP_ID"
+    };
+
+    // Initialize Firebase
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    // Database path where devices write location
+    // Structure:
+    // /vehicles/{vehicleId} => { lat, lng, speed, heading, timestamp }
+    const vehiclesRef = db.ref('vehicles');
+
+    // Map initialization
+    const map = L.map('map').setView([20.5937, 78.9629], 5); // India center default
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    const statusEl = document.getElementById('status');
+    const vehicleListEl = document.getElementById('vehicle-list');
+    const lastUpdateEl = document.getElementById('last-update');
+    const fitBtn = document.getElementById('fit');
+    const clearPathsBtn = document.getElementById('clear-paths');
+
+    let markers = {};    // vehicleId -> marker
+    let paths = {};      // vehicleId -> polyline
+    let coordsHistory = {}; // vehicleId -> [[lat,lng], ...]
+
+    // Listen for additions and changes
+    vehiclesRef.on('value', snapshot => {
+      const data = snapshot.val();
+      statusEl.textContent = "Connected";
+      if (!data) {
+        vehicleListEl.innerHTML = "<i>No vehicles reporting yet.</i>";
+        return;
+      }
+      vehicleListEl.innerHTML = "";
+      let latestTimestamp = 0;
+      Object.entries(data).forEach(([vid, info]) => {
+        // Validate
+        if (!info || typeof info.lat !== 'number' || typeof info.lng !== 'number') return;
+        const { lat, lng, speed, heading, timestamp } = info;
+
+        // Update last timestamp
+        if (timestamp > latestTimestamp) latestTimestamp = timestamp;
+
+        // Marker
+        if (markers[vid]) {
+          markers[vid].setLatLng([lat, lng]);
+        } else {
+          const icon = L.icon({
+            iconUrl: 'https://cdn-icons-png.flaticon.com/512/194/194334.png',
+            iconSize: [28, 28],
+            iconAnchor: [14, 14]
+          });
+          markers[vid] = L.marker([lat, lng], { icon }).addTo(map);
+          markers[vid].bindPopup(`<b>Vehicle ${vid}</b><br/>Lat: ${lat.toFixed(6)}<br/>Lng: ${lng.toFixed(6)}`);
+        }
+
+        // Push to history and polyline
+        coordsHistory[vid] = coordsHistory[vid] || [];
+        const last = coordsHistory[vid].length ? coordsHistory[vid][coordsHistory[vid].length - 1] : null;
+        if (!last || last[0] !== lat || last[1] !== lng) {
+          coordsHistory[vid].push([lat, lng]);
+          if (paths[vid]) {
+            paths[vid].setLatLngs(coordsHistory[vid]);
+          } else {
+            paths[vid] = L.polyline(coordsHistory[vid], { weight: 4 /* color default */ }).addTo(map);
+          }
+        }
+
+        // Vehicle list UI
+        const item = document.createElement('div');
+        item.className = 'veh';
+        item.innerHTML = `<strong>ID:</strong> ${vid} <br>
+                          <strong>Lat:</strong> ${lat.toFixed(6)}<br>
+                          <strong>Lng:</strong> ${lng.toFixed(6)}<br>
+                          <strong>Speed:</strong> ${speed ?? '—'} km/h<br>
+                          <button data-vid="${vid}" class="center-btn">Center</button>
+                          <button data-vid="${vid}" class="clear-btn">Clear Path</button>`;
+        vehicleListEl.appendChild(item);
+      });
+
+      lastUpdateEl.textContent = "Last update: " + (new Date(latestTimestamp).toLocaleString() || '—');
+    }, err => {
+      statusEl.textContent = "Error connecting: " + err;
+    });
+
+    // Delegated clicks
+    vehicleListEl.addEventListener('click', e => {
+      const target = e.target;
+      if (target.matches('.center-btn')) {
+        const vid = target.dataset.vid;
+        if (markers[vid]) map.setView(markers[vid].getLatLng(), 16);
+      }
+      if (target.matches('.clear-btn')) {
+        const vid = target.dataset.vid;
+        if (paths[vid]) {
+          map.removeLayer(paths[vid]);
+          delete paths[vid];
+          coordsHistory[vid] = [];
+        }
+      }
+    });
+
+    fitBtn.addEventListener('click', () => {
+      const group = new L.featureGroup(Object.values(markers));
+      if (Object.keys(markers).length) map.fitBounds(group.getBounds().pad(0.2));
+    });
+
+    clearPathsBtn.addEventListener('click', () => {
+      Object.keys(paths).forEach(k => {
+        map.removeLayer(paths[k]);
+        delete paths[k];
+        coordsHistory[k] = [];
+      });
+    });
+
+    // Optional: follow a specific vehicle if provided in query ?follow=vehicle1
+    const params = new URLSearchParams(location.search);
+    const follow = params.get('follow');
+    if (follow) {
+      vehiclesRef.child(follow).on('value', snap => {
+        const info = snap.val();
+        if (!info) return;
+        if (markers[follow]) map.setView([info.lat, info.lng], 16);
+      });
+    }
+  </script>
+</body>
+    </html>
